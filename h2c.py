@@ -593,5 +593,5 @@ if __name__ == "__main__":
         c.setDestination(sys.argv[6])
 
         if c.process():
-#            c.loadPages()
+            c.loadPages()
             print '\nIMPORT COMPLETE.\n'
