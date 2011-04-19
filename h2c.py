@@ -493,6 +493,7 @@ class H2C:
             print 'Page Successfully Created: %s, %s' % (newpage['title'], len(content))
 
     def __getMimeType(self, ext):
+        ext=ext.lower()
         contentType='text/plain'
 
         if ext=='.txt':
