@@ -101,6 +101,9 @@ class EchoTarget:
         if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
             new_tag = tag
             dot = '. '
+        elif tag == 'hr':
+            style_value='----'
+            newline = '\n'
 	elif tag == 'div':
             if 'id' in attrib and 'content' == attrib['id']:
                 new_tag=''
