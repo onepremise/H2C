@@ -16,6 +16,7 @@
 #
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
 import sys
 import re
 import string
@@ -214,7 +215,6 @@ class H2C:
     def __processLinks(self):
         print 'PROCESSING LINKS...'
         for (s, d) in self.linksToReplace:
-            print 'Checking %s; %s' % (s, d)
             self.__globalReplace(s,d)
 
     def __processImages(self):
@@ -253,10 +253,15 @@ class H2C:
             if not all(c in string.printable for c in originalValue):
                 continue
 
+            value=value.replace('..', '').strip('/')
+
             if oldLink.find(value)>-1 and value.find('http')<0 and value.find('/')>-1:
                 newformattedLink='[%s:%s]' % (self.space, newLink)
-                print 'UPDATEING LINK-p: File=%s; Val=%s' % (fname, value)
-                print 'NEW LINK %s' % newformattedLink
+
+                print '\nUPDATEING LINK-p: File=%s; Val=%s' % (fname, value)
+                print 'DETAILS ORIGINAL: %s, SPECIFIC: %s' % (originalValue, value)
+                print 'NEW FULL LINK %s' % newformattedLink
+
                 s=s.replace(originalValue, newformattedLink)
                 updated = 1
 
@@ -588,4 +593,5 @@ if __name__ == "__main__":
         c.setDestination(sys.argv[6])
 
         if c.process():
-            c.loadPages()
+#            c.loadPages()
+            print '\nIMPORT COMPLETE.\n'

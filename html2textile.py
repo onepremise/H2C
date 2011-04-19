@@ -257,14 +257,11 @@ class EchoTarget:
             self.final_output.append('\n')
         elif tag == 'a':
             retrieved_value=''.join(self.haystack)
-            if self.a_part['title']:
-                textilized = '[%s (%s)|%s]' % (
-                                                 retrieved_value,
-                                                 self.a_part.get('title'),
-                                                 self.a_part.get('href'),
-                                                 )
-                self.haystack = []
-            elif retrieved_value:
+
+            if len(retrieved_value)==0 and self.a_part['title']:
+                retrieved_value=self.a_part['title']
+      
+            if retrieved_value:
                 textilized = '[%s'%retrieved_value
 		href=self.a_part['href']
 
