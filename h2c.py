@@ -108,17 +108,6 @@ class H2C:
         if not os.path.exists(self.edestination):
             print 'Creating destination: %s' % self.edestination
             os.makedirs(self.edestination)
-            
-        filename = self.edestination + os.sep + os.path.basename(self.edestination)
-            
-        pathlist=self.esource.strip(os.sep).split(os.sep)
-        newpath=pathlist[0]
-        newpath=newpath.replace(' ', '')
-        
-        localfile = open(filename, 'a')
-        localfile.write('h2. %s > %s >\n\n' % (self.space, newpath))
-        localfile.write(' * [%s:%s]\n' % (self.space, newpath))
-        localfile.close()
         
     # Import content using xmlrpc and webdav
     def importContent(self):
@@ -260,12 +249,16 @@ class H2C:
         print 'Creating browse page for directory=%s' % directory
         if directory=='/':
             basedir=os.sep + self.edestination
+            print 'basedir=%s' % basedir
+            filename = self.edestination + basedir
+            localpath=filename
         else:
             basedir = os.path.basename(directory)
-
-        filename = self.edestination + directory + os.sep + basedir
+            filename = self.edestination + directory + os.sep + basedir
         
-        if stripPage:
+        print 'filename=%s' % filename
+        
+        if stripPage and directory!='/':
             localpath=self.__stripProjectSubDir(directory)
             filename = self.edestination + localpath + os.sep + os.path.basename(localpath)
             
@@ -274,7 +267,12 @@ class H2C:
         if not appendPage:
             localfile.seek ( 0, 0 )
             formattedDir=localpath.replace(os.sep, ' > ')
-            localfile.write('h2. %s > %s %s >\n\n' % (self.space, self.edestination, formattedDir))
+            
+            if directory=='/':
+                localfile.write('h2. %s > %s >\n\n' % (self.space, self.edestination))
+            else:
+                localfile.write('h2. %s > %s %s >\n\n' % (self.space, self.edestination, formattedDir))
+                
             localfile.flush()
             localfile.seek ( 0, 2 )
 
