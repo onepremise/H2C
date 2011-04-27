@@ -393,7 +393,6 @@ class H2C:
                     self.__convertFile(f,basename)
                     print '\n'
                 else:
-                    
                     if recreateFullPath:
                         newf=basename+extension
                         newf=self.__matchNormalizedString(newf, 1)
@@ -506,11 +505,12 @@ class H2C:
     def __replaceLink(self, dname, fname, oldLink, newLink):
         fpath = os.path.join(dname, fname)
         updated = 0
+        
         with open(fpath) as f:
-                    s = f.read()
+            s = f.read()
 
         testValue=re.compile('\[ *.+? *\: *(.+?) *\]')
-        m = testValue.finditer(s) 
+        m = testValue.finditer(s)
 
         for item in m:
             originalValue=item.group(0)
