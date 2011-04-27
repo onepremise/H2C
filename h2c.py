@@ -874,9 +874,9 @@ if __name__ == "__main__":
         print '   * import - import content to confluence'
         print '              specify additional parameters: [confluence-space] [local-source] [working-directory]' 
         print '   * export - export content from webdav/sharepoint'
-        print '              specify additional parameters: [confluence-space] [remote-path] [exported-data]\n'
+        print '              specify additional parameters: [confluence-space] [remote-path] [local-directory]\n'
         print 'Example: ./htc.py import https://server.com user test spacename /source /converted\n'
-        print 'Example: ./htc.py export https://server.com:8443 user test spacename /remote/directory\n'
+        print 'Example: ./htc.py export https://server.com:8443 user test spacename /remote/directory /local/path\n'
     else:
         c = H2C()
 
