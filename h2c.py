@@ -294,13 +294,11 @@ class H2C:
         localfile.close()
         
     def __recieveFile(self, response, localPath):
-        length=int(response.getheader('content-length'))
-        
         local_file = open(localPath, "w")
-
-        print 'Reading Bytes=%d' % length
-      
+        
         if length is not None:
+            length=int(response.getheader('content-length'))
+            print 'Reading Bytes=%d' % length
             while length > BLOCK_SIZE: 
                 data = response.read(BLOCK_SIZE) 
                 length -= BLOCK_SIZE
