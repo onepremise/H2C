@@ -310,7 +310,7 @@ class H2C:
             data = response.read(length)
             local_file.write(data)
         else: 
-            body = response.read()
+            data = response.read()
             local_file.write(data)
                     
         local_file.close()
