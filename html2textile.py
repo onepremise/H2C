@@ -28,7 +28,6 @@ import htmlentitydefs
 from htmlentitydefs import name2codepoint
 import re
 import string
-import chardet
 
 try:
   from lxml import etree
@@ -345,13 +344,6 @@ class EchoTarget:
 
  
 def html2textile(html):
-    #1st pass
-    #clean the whitespace and convert html to xhtml
-    encoding = chardet.detect(html)['encoding']
-
-    if encoding != 'utf-8':
-        html = html.decode(encoding, 'replace').encode('utf-8')
-
     parser = etree.HTMLParser(encoding = 'utf-8')
     tree = etree.fromstring(html, parser)
     xhtml = etree.tostring(tree, method="xml")

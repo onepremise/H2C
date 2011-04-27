@@ -18,6 +18,7 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 import sys
+import traceback
 import re
 import string
 import os
@@ -26,23 +27,297 @@ import shutil
 import xmlrpclib
 from xmlrpclib import Server
 from collections import deque
+import urlparse
+import dav
+import urllib2
+import httplib
 
+try:
+    False
+    True
+except NameError:
+    True = 1
+    False = not True
+    pass
+
+BLOCK_SIZE =  1048576 * 16
+
+# Export/Import class for exporting contents, converting HTML, and importing 
+# content.
 class H2C:
     def __init__(self):
+        self.action=''
         self.server=''
+        self.webdav=''
         self.login=''
         self.passwd=''
 
         self.space='default'
 
-        self.source='source'
-        self.destination='converted'
+        self.isource='source'
+        self.idestination='converted'
+
+        self.esource='remote-source'
+        self.edestination='exported-data'
+
         self.attachements='attachments'
 
         self.linksToReplace=[]
         self.imagesToReplace=[]
 
-    def __testConnection(self):
+    def setServer(self, s):
+        self.webdav=s
+        self.server=s
+
+        if self.action=='import':
+            self.webdav=self.server+'/plugins/servlet/confluence/default/Global'
+            self.server=self.server+'/rpc/xmlrpc'
+
+    def setAction(self, a):
+        self.action=a
+
+    def setUser(self, u):
+        self.login=u
+
+    def setPass(self, p):
+        self.passwd=p
+
+    def setSpace(self, s):
+        self.space=s
+
+    def setImportSource(self, s):
+        self.isource=s
+
+    def setImportDestination(self, d):
+        self.idestination=d
+
+    def setExportSource(self, s):
+        self.esource=s
+
+    def setExportDestination(self, d):
+        self.edestination=d
+        
+    # Create necessary project directories for Import
+    def __initializeImportEnvironment(self):
+        if not os.path.exists(self.idestination):
+            print 'Creating destination: %s' % self.idestination
+            os.makedirs(self.idestination)
+
+    # Create necessary project directories for Export
+    def __initializeExportEnvironment(self):
+        if not os.path.exists(self.edestination):
+            print 'Creating destination: %s' % self.edestination
+            os.makedirs(self.edestination)
+            
+        filename = self.edestination + os.sep + os.path.basename(self.edestination)
+            
+        pathlist=self.esource.strip(os.sep).split(os.sep)
+        newpath=pathlist[0]
+        newpath=newpath.replace(' ', '')
+        
+        localfile = open(filename, 'a')
+        localfile.write('h2. %s > %s >\n\n' % (self.space, newpath))
+        localfile.write(' * [%s:%s]\n' % (self.space, newpath))
+        localfile.close()
+        
+    # Import content using xmlrpc and webdav
+    def importContent(self):
+        if not self.__testXmlRPCConnection():
+            return False
+
+        self.__initializeImportEnvironment()
+
+        self.attachements=os.path.join(self.idestination, self.attachements)
+            
+        if not os.path.exists(self.attachements):
+            print 'Creating destination: %s' % self.attachements
+            os.makedirs(self.attachements)
+
+        self.__convertContents(self.isource, 1)
+        self.__processLinks()
+        self.__processImages()
+
+        return True
+
+    # Export content from webdav
+    def exportContent(self):
+        self.__initializeExportEnvironment()
+
+        print 'Exporting content from %s' % self.server
+        try:
+            filename=os.path.basename(self.esource)
+
+            o = urlparse.urlparse(self.server)
+     
+            if o.scheme=='http':
+                print 'Attempting authentication with webdav...'
+                conn = dav.DAVConnection(o.netloc)
+            elif o.scheme=='https':
+                print 'Attempting authentication with secure webdav...'
+                conn = dav.DAVSConnection(o.netloc)
+
+            conn.set_auth(self.login, self.passwd)
+
+            response = conn.options(self.esource)
+
+            if response.status != 200:
+                print 'Attempting authentication with NTLM...'
+    
+                conn = dav.SharePointDAVConnection(o.netloc)
+
+                conn.set_auth(self.login, self.passwd)
+
+            if response.status != 200:
+                print 'Connection Authenticated.'
+                self.__exportWebDAVDir(conn, self.esource)
+            else:
+                print 'ERROR: Failed to authenticate! Please check your login.'
+        except Exception, e:
+            print 'ERROR: Failed to export webdav: %s' % self.server
+            print 'EXCEPTION: %s\n' % e
+            traceback.print_exc(file=sys.stdout)
+            
+    def __isProjectDir(self, directory):
+        pattern = re.compile('[12345]\. .+?\/')
+        m = pattern.search(directory)
+                
+        if m==None:
+            pattern = re.compile('[12345]\. .*')
+            m = pattern.search(directory)        
+            
+        if m!=None:
+            return True
+            
+        return False
+        
+    def __stripProjectSubDir(self, c):
+        pattern = re.compile('[12345]\. .+?\/')
+        m = pattern.search(c)
+                
+        if m==None:
+            pattern = re.compile('[12345]\. .*')
+            m = pattern.search(c)
+            
+        if m==None:
+            return c
+            
+        localpath=c
+        localpath=localpath.replace(m.group(0), '')
+        localpath=localpath.replace('//', '/')
+        localpath=localpath.rstrip(os.sep)
+        
+        return localpath
+
+    # Recursive interation over child drectories and contents
+    def __exportWebDAVDir(self, conn, directory):
+        try:
+            print 'Exporting directory=%s' % directory
+            
+            parent=self.edestination+directory
+            isParentProjSubDir=self.__isProjectDir(parent)
+            
+            if not os.path.exists(parent) and not isParentProjSubDir:
+                os.makedirs(parent)
+
+            do = dav.DAVCollection(directory, conn)
+
+            cnames = sorted(do.get_child_names())
+            
+            if not (self.__isProjectDir(os.path.basename(directory))):
+                self.__createBrowsePage(False, True, directory, cnames)
+            else:
+                self.__createBrowsePage(True, True, directory, cnames)
+
+            for c in cnames:
+                node=self.server+c
+                localpath=self.edestination+c
+                projectSubDir=self.__isProjectDir(c)
+
+                do = dav.DAVResource(node, conn)
+
+                is_collection=do.is_collection()
+
+                if projectSubDir:
+                    localpath=self.__stripProjectSubDir(localpath)
+
+                if is_collection:
+                    if not os.path.exists(localpath):
+                        os.mkdir(localpath)
+
+                    if c != directory:
+                    	self.__exportWebDAVDir(conn, c)
+                else:
+                    #recreate file
+                    print 'Downloading File %s...' % node
+                    self.__recieveFile(do.get(), localpath)
+        except Exception, e:
+            print 'ERROR: Failed to export webdav: %s' % self.server
+            print 'EXCEPTION: %s\n' % e
+            traceback.print_exc(file=sys.stdout)
+
+    # Create a browse page for navigation in confluence
+    def __createBrowsePage(self, appendPage, stripPage, directory, cnames):
+        print 'Creating browse page for directory=%s' % directory
+        if directory=='/':
+            basedir=os.sep + self.edestination
+        else:
+            basedir = os.path.basename(directory)
+
+        filename = self.edestination + directory + os.sep + basedir
+        
+        if stripPage:
+            localpath=self.__stripProjectSubDir(directory)
+            filename = self.edestination + localpath + os.sep + os.path.basename(localpath)
+            
+        localfile = open(filename, 'a')
+
+        if not appendPage:
+            localfile.seek ( 0, 0 )
+            formattedDir=localpath.replace(os.sep, ' > ')
+            localfile.write('h2. %s > %s %s >\n\n' % (self.space, self.edestination, formattedDir))
+            localfile.flush()
+            localfile.seek ( 0, 2 )
+
+        for c in cnames:
+            if c != directory:
+                if not self.__isProjectDir(os.path.basename(c)):
+                    c=self.__stripProjectSubDir(c)
+                    basename, ext = os.path.splitext(c)
+                    
+                    if len(ext)==0:
+                        newpath=os.path.basename(c)
+                        newpath=newpath.replace(' ', '')
+                        localfile.write(' * [%s:%s]\n' % (self.space, newpath))
+                    else:
+                        newpath=os.path.basename(c)
+                        newpath=newpath.replace(' ', '')
+                        localfile.write(' * [^%s]\n' % newpath)
+
+        localfile.close()
+        
+    def __recieveFile(self, response, localPath):
+        length=int(response.getheader('content-length'))
+        
+        local_file = open(localPath, "w")
+
+        print 'Reading Bytes=%d' % length
+      
+        if length is not None:
+            while length > BLOCK_SIZE: 
+                data = response.read(BLOCK_SIZE) 
+                length -= BLOCK_SIZE
+                local_file.write(data)
+                print 'Remainding Bytes=%d' % length
+
+            data = response.read(length)
+            local_file.write(data)
+        else: 
+            body = response.read()
+            local_file.write(data)
+                    
+        local_file.close()
+
+    def __testXmlRPCConnection(self):
         print '\nTesting Connection...'
 
         try:
@@ -84,7 +359,7 @@ class H2C:
         newpath=''
 
         for c in components:
-            if c != self.destination and c != self.attachements:
+            if c != self.idestination and c != self.attachements:
                 c=self.__normalizeString(c, not c[0].isupper())
             newpath=os.path.join(newpath,c)
 
@@ -99,7 +374,7 @@ class H2C:
                 else:
                     d=''
 
-                newd=os.path.join(self.destination,d)
+                newd=os.path.join(self.idestination,d)
 
                 newd=self.__matchNormalizedString(newd, 1)
 
@@ -114,7 +389,7 @@ class H2C:
                 if not recreateFullPath:
                     basename=os.path.basename(basename)
 
-                basename=os.path.join(self.destination, basename)
+                basename=os.path.join(self.idestination, basename)
 
                 if (extension == '.html'):
                     self.__convertFile(f,basename)
@@ -136,7 +411,7 @@ class H2C:
 
     def __globalImageReplace(self, image):
         basename=os.path.basename(image)
-        for dname, dirs, files in os.walk(self.destination):
+        for dname, dirs, files in os.walk(self.idestination):
             if dname.rfind('attachments')<0:
                 for fname in files:
                     fpath = os.path.join(dname, fname)
@@ -201,8 +476,8 @@ class H2C:
         return newfilename
 
     def __flagLink(self, f, fdestination):
-        updatedSource=f.replace(self.source, '')
-        updatedDest=fdestination.replace(self.destination, '')
+        updatedSource=f.replace(self.isource, '')
+        updatedDest=fdestination.replace(self.idestination, '')
         updatedDest=os.path.basename(updatedDest)
 
         updatedSource=self.__stripHtmlExt(updatedSource, updatedSource)
@@ -223,7 +498,7 @@ class H2C:
             self.__globalImageReplace(f)
 
     def __globalReplace(self, oldLink, newLink):
-        for dname, dirs, files in os.walk(self.destination):
+        for dname, dirs, files in os.walk(self.idestination):
             for fname in files:
                 oldLink=oldLink.strip('/')
                 newLink=newLink.strip('/')
@@ -302,51 +577,12 @@ class H2C:
         content=p.sub('', content)
         return content
 
-    def setServer(self, s):
-        self.server=s
-        self.server=self.server+'/rpc/xmlrpc'
-
-    def setUser(self, u):
-        self.login=u
-
-    def setPass(self, p):
-        self.passwd=p
-
-    def setSpace(self, s):
-        self.space=s
-
-    def setSource(self, s):
-        self.source=s
-
-    def setDestination(self, d):
-        self.destination=d
-
-    def process(self):
-	if not self.__testConnection():
-            return False
-
-        if not os.path.exists(self.destination):
-            print 'Creating destination: %s' % self.destination
-            os.makedirs(self.destination)
-
-        self.attachements=os.path.join(self.destination, self.attachements)
-            
-        if not os.path.exists(self.attachements):
-            print 'Creating destination: %s' % self.attachements
-            os.makedirs(self.attachements)
-
-        self.__convertContents(self.source, 1)
-        self.__processLinks()
-        self.__processImages()
-
-        return True
-
     def loadPages(self):
         s = Server(self.server)
         token = s.confluence1.login(self.login, self.passwd)
 
-        destList=os.walk(self.destination)
-        for root, subFolders, files in os.walk(self.destination):
+        destList=os.walk(self.idestination)
+        for root, subFolders, files in os.walk(self.idestination):
             for folder in subFolders:
                 dpath=os.path.join(root,folder).replace('(','').replace(')','')
                 self.__createDir(s, token, dpath)
@@ -415,7 +651,7 @@ class H2C:
             count+=1
 
     def __createDir(self, server, token, dpath):
-        dpath=dpath.replace(self.destination, '').strip('/')
+        dpath=dpath.replace(self.idestination, '').strip('/')
         basename=os.path.basename(dpath)
         parent=os.path.dirname(dpath)
         parentID = None
@@ -454,7 +690,7 @@ class H2C:
         content=f.read()
         f.close()
 
-        relpath=fpath.replace(self.destination, '').strip('/')
+        relpath=fpath.replace(self.idestination, '').strip('/')
 
         basename=os.path.basename(relpath)
         parent=os.path.dirname(relpath).strip('/')
@@ -534,20 +770,34 @@ class H2C:
             contentType='video/mpeg'
         elif ext=='.mov':
             contentType='video/quicktime'
-	elif ext=='.sql':
+        elif ext=='.sql':
              contentType='text/plain'
         elif ext=='.bat':
              contentType='text/plain'
+        elif ext=='.dbf':
+             contentType='application/dbase'
+        elif ext=='.jar':
+             contentType='application/java-archive'
         else:
             print 'ERROR: Unknown content type: %s' % ext
 
         return contentType
 
     def __loadAttachment(self, server, token, fpath):
+        relpath=fpath.replace(self.idestination, '').strip('/')
+
+        basename=os.path.basename(relpath)
+        parent=os.path.dirname(relpath).strip('/')
+
+        if os.path.getsize(fpath)>8388608:
+             print 'Using Webdav to load %s' % basename
+             self.__loadLargeAttachment(server, token, fpath, parent, basename)
+             return
+
         with open(fpath, 'rb') as f:
             data = f.read(); # slurp all the data
 
-        relpath=fpath.replace(self.destination, '').strip('/')
+        relpath=fpath.replace(self.idestination, '').strip('/')
 
         basename=os.path.basename(relpath)
         parent=os.path.dirname(relpath).strip('/')
@@ -579,20 +829,76 @@ class H2C:
 
         f.close()
 
+    def __loadLargeAttachment(self, sever, token, fpath, parent, basename):
+        url = self.webdav + '/' + self.space + '/' + parent + '/' + basename
+
+        if not os.path.exists(fpath):
+            return False
+
+        with open(fpath, 'rb') as f:
+            data = f.read();
+
+        name, ext = os.path.splitext(fpath)
+
+        contentType=self.__getMimeType(ext)
+
+        try:
+            print 'url=%s' % url
+            o = urlparse.urlparse(url)
+     
+            if o.scheme=='http':
+                conn = dav.DAVConnection(o.netloc)
+            elif o.scheme=='https':
+                conn = dav.DAVSConnection(o.netloc)
+
+            conn.set_auth(self.login, self.passwd)
+
+            response = conn.options(url)
+
+            if response.status != 200:
+                raise Exception("%d, %s" % (response.status, response.reason))
+
+            response = conn.put(o.geturl(), data)
+
+            if response.status > 204:
+                raise Exception("%d, %s" % (response.status, response.reason))
+
+            print 'WebDav Import Successful.'
+        except Exception, e:
+            print 'ERROR: Failed to load attacment using webdav: %s' % basename
+            print 'EXCEPTION: %s\n' % e
+
 if __name__ == "__main__":
-    if len(sys.argv)<=5:
-        print '\nUsage: h2c.py [https://servername.com] [login] [password] [confluence-space] [source] [destination]\n'
-        print 'Example: ./htc.py https://server.com user test spacename source converted\n'
+    if len(sys.argv)<=4:
+        print '\nUsage: h2c.py [action] [https://servername.com] [login] ' + \
+              '[password] [confluence-space] [action specific options...]\n'
+        print '  Where [action] can be one of the following:'
+        print '   * import - import content to confluence'
+        print '              specify additional parameters: [confluence-space] [local-source] [working-directory]' 
+        print '   * export - export content from webdav/sharepoint'
+        print '              specify additional parameters: [confluence-space] [remote-path] [exported-data]\n'
+        print 'Example: ./htc.py import https://server.com user test spacename /source /converted\n'
+        print 'Example: ./htc.py export https://server.com:8443 user test spacename /remote/directory\n'
     else:
         c = H2C()
 
-        c.setServer(sys.argv[1])
-        c.setUser(sys.argv[2])
-        c.setPass(sys.argv[3])
-        c.setSpace(sys.argv[4])
-        c.setSource(sys.argv[5])
-        c.setDestination(sys.argv[6])
+        c.setAction(sys.argv[1])
+        c.setServer(sys.argv[2])
+        c.setUser(sys.argv[3])
+        c.setPass(sys.argv[4])
+        c.setSpace(sys.argv[5])
 
-        if c.process():
-            c.loadPages()
-            print '\nIMPORT COMPLETE.\n'
+        if c.action=='import':
+            c.setImportSource(sys.argv[6])
+            c.setImportDestination(sys.argv[7])
+
+            if c.importContent():
+                c.loadPages()
+                print '\nIMPORT COMPLETE.\n'
+        elif c.action=='export':
+            c.setExportSource(sys.argv[6])
+            c.setExportDestination(sys.argv[7])
+            if c.exportContent():
+                print '\n EXPORT COMPLETE.\n'
+        else:
+            print 'Please specify an accpeted [action]!'
