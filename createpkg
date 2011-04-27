@@ -1,0 +1,3 @@
+#!/bin/bash
+rm h2c.zip
+zip h2c.zip 3rdParty h2c.py html2textile.py README -r -x *.svn*
