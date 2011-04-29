@@ -22,6 +22,7 @@ import traceback
 import re
 import string
 import os
+import codecs
 from html2textile import html2textile
 import shutil
 import xmlrpclib
@@ -339,6 +340,8 @@ class H2C:
         print 'Successful Testing Connection!'
 
         return True
+        
+        
 
     def __normalizeString(self, value, useTitle):
         value=value.replace('-',' ')
@@ -400,7 +403,7 @@ class H2C:
                     else:
                         basename=os.path.basename(file)
                         attachment=os.path.join(self.attachements,basename)
-                        attachment=self.__matchNormalizedString(attachment, 1)
+                        attachment=self.__matchNormalizedString(attachment, 0)
                         shutil.copyfile(f, attachment)
 
                     #if (extension in ['.jpg', 'gif']):
@@ -574,6 +577,19 @@ class H2C:
         p = re.compile('http:\/\/localhost.+?\/')
         content=p.sub('', content)
         return content
+        
+    def __resetConnection(self, s, token):
+        print 'Restablishing Connection...'
+        
+       # s.confluence1.logout(token)
+        
+        s = Server(self.server)
+        
+        token = s.confluence1.login(self.login, self.passwd)
+        
+        print 'Connection Established.'
+        
+        return s, token
 
     def loadPages(self):
         s = Server(self.server)
@@ -589,10 +605,8 @@ class H2C:
                 basename, ext = os.path.splitext(fullrelpath)
 
                 if ext == '':
-                    print('loading page: %s' % fullrelpath)
                     self.__loadPage(s, token, fullrelpath)
                 else:
-                    print('loading attachment: %s:' % fullrelpath)
                     self.__loadAttachment(s, token, fullrelpath)
 		
 		print '\n'
@@ -601,20 +615,29 @@ class H2C:
         components = deque(parent.split(os.sep))
 
         c=components.popleft()
+        
         try:
             if parentID == None:
-                page = server.confluence1.getPage(token, self.space, c)
+                try:
+                    page = server.confluence1.getPage(token, self.space, c)
+                except Exception, e:
+                    return None
             else:
                 page = server.confluence1.getPage(token, parentID)
 
-            pagesummaries = server.confluence1.getChildren(token, page['id'])
+            pagesummaries = sorted(server.confluence1.getChildren(token, page['id']))
 
             if len(components)>0 and pagesummaries is not None:
                 if len(pagesummaries)>0:
                     for ps in pagesummaries:
-                        if ps['title'] == components[0]:
+                        pagename=self.__stripUniqueID(ps['title'])
+                        #print 'pagename=%s, ps[title]=%s, components[0]=%s' % (pagename,ps['title'],components[0])
+                        if pagename == components[0]:
+                            components[0]=ps['title']
                             nextpath=os.path.join(*components)
+                            #print 'after nextpath=%s, %s' % (nextpath, ps['title'])
                             return self.__getPageID(server,token,nextpath,ps['id'])
+                    return None
             elif len(components) == 0:
                 return page['id']
         except Exception, e:
@@ -647,7 +670,45 @@ class H2C:
                 server.confluence1.storePage(token, originalpage)
 
             count+=1
+            
+    def __stripUniqueID(self, pagename):
+        pattern = re.compile(' \([0-9]+?\)')
+        m = pattern.search(pagename)
+            
+        if m==None:
+            return pagename
+            
+        pagename=pagename.replace(m.group(0), '')
+        
+        return pagename        
+            
+    def __getUniqueConfluencePageName(self, server, token, pagename):
+        count=1
+        page=None
 
+        try:
+            originalpage = server.confluence1.getPage(token, self.space, pagename)
+
+            if originalpage is None:
+                return pagename
+        except:
+            return pagename
+
+        while page is None:
+            nextpagename=pagename+' ('+str(count)+')'
+
+            try:
+                testpage = server.confluence1.getPage(token, self.space, nextpagename)
+            except:
+                testpage = None
+
+            if testpage is None:
+                page=nextpagename
+
+            count+=1
+            
+        return page
+            
     def __createDir(self, server, token, dpath):
         dpath=dpath.replace(self.idestination, '').strip('/')
         basename=os.path.basename(dpath)
@@ -655,6 +716,7 @@ class H2C:
         parentID = None
 
         print('Checking path: "%s"' % dpath)
+        
         if len(parent)>0:
             parentID=self.__getPageID(server, token, parent)
             print 'Parent ID=%s' % parentID
@@ -665,9 +727,9 @@ class H2C:
             print 'Directory exist already: %s; skipping...' % basename
             return
 
-        self.__renameOldDuplicates(server, token, basename)
-
-        newpagedata = {"title":basename, "content":" ","space":self.space}
+        pagename=self.__getUniqueConfluencePageName(server, token, basename)
+        
+        newpagedata = {"title":pagename, "content":" ","space":self.space}
 
         if parentID is not None:
             print 'Assigning parentID: %s' % parentID
@@ -680,10 +742,13 @@ class H2C:
         except Exception, e:
             print 'ERROR: Failed to create %s' % basename
             print('EXCEPTION: %s\n' % unicode(str(e)))
+            traceback.print_exc(file=sys.stdout)
 
                 
     def __loadPage(self, server, token, fpath):
-        f=open(fpath)
+        print('Loading page: %s...' % fpath)
+        
+        f=open(fpath, 'rb')
         f.seek(0)
         content=f.read()
         f.close()
@@ -708,7 +773,8 @@ class H2C:
             newpage = server.confluence1.storePage(token, page)
             print 'Page Successfully updated: %s, %s' % (newpage['title'], len(content))
         else:
-            newpagedata = {"title":basename, "content":content,"space":self.space}
+            pagename=self.__getUniqueConfluencePageName(server, token, basename)
+            newpagedata = {"title":pagename, "content":content,"space":self.space}
 
             if len(parent)>0:
                 parentID=self.__getPageID(server, token, parent)
@@ -721,16 +787,26 @@ class H2C:
                     else:
                         newpagedata['parentId']=parentpage['id']
 
-            self.__renameOldDuplicates(server, token, basename)
-
-            newpage = server.confluence1.storePage(token, newpagedata)
-            print 'Page Successfully Created: %s, %s' % (newpage['title'], len(content))
-
+            #self.__renameOldDuplicates(server, token, basename)
+            
+            try:
+                newpage = server.confluence1.storePage(token, newpagedata)
+                print 'Page Successfully Created: %s, %s' % (newpage['title'], len(content))
+            except Exception, e:
+                print 'ERROR: Failed to create page:'
+                print '%s' % newpagedata
+                print 'This page contains data which is not meant for representation' + \
+                ' probably should be loaded as an attachement.'
+                server, token=self.__resetConnection(server, token)
+                self.__loadAttachment(server, token, fpath)
+                
     def __getMimeType(self, ext):
         ext=ext.lower()
         contentType='text/plain'
 
         if ext=='.txt':
+            contentType='text/plain'
+        elif ext=='.cfg':
             contentType='text/plain'
         elif ext=='.html':
             contentType='text/html'
@@ -777,11 +853,13 @@ class H2C:
         elif ext=='.jar':
              contentType='application/java-archive'
         else:
-            print 'ERROR: Unknown content type: %s' % ext
+            print 'WARNING: Unknown mime type: %s' % ext
 
         return contentType
 
     def __loadAttachment(self, server, token, fpath):
+        print('loading attachment: %s...' % fpath)
+        
         relpath=fpath.replace(self.idestination, '').strip('/')
 
         basename=os.path.basename(relpath)
@@ -874,9 +952,9 @@ if __name__ == "__main__":
         print '   * import - import content to confluence'
         print '              specify additional parameters: [confluence-space] [local-source] [working-directory]' 
         print '   * export - export content from webdav/sharepoint'
-        print '              specify additional parameters: [confluence-space] [remote-path] [local-directory]\n'
+        print '              specify additional parameters: [confluence-space] [remote-path] [exported-data]\n'
         print 'Example: ./htc.py import https://server.com user test spacename /source /converted\n'
-        print 'Example: ./htc.py export https://server.com:8443 user test spacename /remote/directory /local/path\n'
+        print 'Example: ./htc.py export https://server.com:8443 user test spacename /remote/directory\n'
     else:
         c = H2C()
 
