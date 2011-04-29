@@ -22,7 +22,6 @@ import traceback
 import re
 import string
 import os
-import codecs
 from html2textile import html2textile
 import shutil
 import xmlrpclib
@@ -30,8 +29,8 @@ from xmlrpclib import Server
 from collections import deque
 import urlparse
 import dav
-import urllib2
-import httplib
+import urllib
+import filecmp
 
 try:
     False
@@ -70,7 +69,7 @@ class H2C:
         self.webdav=s
         self.server=s
 
-        if self.action=='import':
+        if self.action=='import' or self.action=='convert':
             self.webdav=self.server+'/plugins/servlet/confluence/default/Global'
             self.server=self.server+'/rpc/xmlrpc'
 
@@ -109,25 +108,6 @@ class H2C:
         if not os.path.exists(self.edestination):
             print 'Creating destination: %s' % self.edestination
             os.makedirs(self.edestination)
-        
-    # Import content using xmlrpc and webdav
-    def importContent(self):
-        if not self.__testXmlRPCConnection():
-            return False
-
-        self.__initializeImportEnvironment()
-
-        self.attachements=os.path.join(self.idestination, self.attachements)
-            
-        if not os.path.exists(self.attachements):
-            print 'Creating destination: %s' % self.attachements
-            os.makedirs(self.attachements)
-
-        self.__convertContents(self.isource, 1)
-        self.__processLinks()
-        self.__processImages()
-
-        return True
 
     # Export content from webdav
     def exportContent(self):
@@ -257,8 +237,6 @@ class H2C:
             basedir = os.path.basename(directory)
             filename = self.edestination + directory + os.sep + basedir
         
-        print 'filename=%s' % filename
-        
         if stripPage and directory!='/':
             localpath=self.__stripProjectSubDir(directory)
             filename = self.edestination + localpath + os.sep + os.path.basename(localpath)
@@ -340,8 +318,6 @@ class H2C:
         print 'Successful Testing Connection!'
 
         return True
-        
-        
 
     def __normalizeString(self, value, useTitle):
         value=value.replace('-',' ')
@@ -366,6 +342,25 @@ class H2C:
 
         return newpath
 
+    # Convert HTML to Confluence Textile for import
+    def convertContent(self):
+        if not self.__testXmlRPCConnection():
+            return False
+
+        self.__initializeImportEnvironment()
+
+        self.attachements=os.path.join(self.idestination, self.attachements)
+            
+        if not os.path.exists(self.attachements):
+            print 'Creating destination: %s' % self.attachements
+            os.makedirs(self.attachements)
+
+        self.__convertContents(self.isource, 1)
+        self.__processLinks()
+        self.__processImages()
+
+        return True
+        
     def __convertContents(self, dir, recreateFullPath):
         for root, subFolders, files in os.walk(dir):
             for folder in subFolders:
@@ -384,6 +379,8 @@ class H2C:
                     os.makedirs(newd)
 
             for file in files:
+                skipCopy=False
+                
                 f=os.path.join(root,file)
                 basename, extension = os.path.splitext(f)
 
@@ -399,12 +396,24 @@ class H2C:
                     if recreateFullPath:
                         newf=basename+extension
                         newf=self.__matchNormalizedString(newf, 1)
-                        shutil.copyfile(f, newf)    
+                        
+                        if os.path.exists(newf) and filecmp.cmp(f, newf):
+                            skipCopy=True
+                            
+                        if not skipCopy:
+                            print 'Copying File: %s...' % f
+                            shutil.copyfile(f, newf)    
                     else:
                         basename=os.path.basename(file)
                         attachment=os.path.join(self.attachements,basename)
                         attachment=self.__matchNormalizedString(attachment, 0)
-                        shutil.copyfile(f, attachment)
+                        
+                        if os.path.exists(attachment) and filecmp.cmp(f, attachment):
+                            skipCopy=True
+                            
+                        if not skipCopy:
+                            print 'Copying Attachment: %s...' % f
+                            shutil.copyfile(f, attachment)
 
                     #if (extension in ['.jpg', 'gif']):
                     #    self.imagesToReplace .append(f)
@@ -578,6 +587,7 @@ class H2C:
         content=p.sub('', content)
         return content
         
+    # If an error occurs through Remote API, you must restart connection
     def __resetConnection(self, s, token):
         print 'Restablishing Connection...'
         
@@ -591,9 +601,12 @@ class H2C:
         
         return s, token
 
-    def loadPages(self):
+    # Import content using xmlrpc and webdav
+    def importContent(self):
         s = Server(self.server)
         token = s.confluence1.login(self.login, self.passwd)
+        
+        self.__remoteMkDirs(s, token, self.idestination)
 
         destList=os.walk(self.idestination)
         for root, subFolders, files in os.walk(self.idestination):
@@ -609,8 +622,29 @@ class H2C:
                 else:
                     self.__loadAttachment(s, token, fullrelpath)
 		
-		print '\n'
+        return True
+        
+    def __remoteMkDirs(self, server, token, path):
+        print 'Creating full path: %s...' % path
+        
+        nextpath = []
+        components = deque(path.strip('/').split(os.sep))
 
+        while len(components) > 0:
+            c=components.popleft()
+        
+            nextpath.append(c)
+            
+            builtpath=os.path.join(*nextpath)
+        
+            print 'Verifying: %s...' % builtpath
+            pID=self.__getPageID(server, token, builtpath)
+        
+            if pID==None:
+                self.__createDir(server, token, builtpath)
+        
+
+    # Get the actual page ID with the correct path
     def __getPageID(self, server, token, parent, parentID=None):
         components = deque(parent.split(os.sep))
 
@@ -646,6 +680,44 @@ class H2C:
             return None
         
         return None
+      
+    # Sometimes duplicates exists and cause issues loading attachements    
+    def __resolvePath(self, server, token, fpath):
+        parentID=None
+        base=os.path.basename(fpath)
+        path=os.path.dirname(fpath)
+        nextpath = []
+        components = deque(path.split(os.sep))
+
+        try:
+            while len(components) > 0:
+                c=components.popleft()
+                
+                if parentID == None:
+                    try:
+                        page = server.confluence1.getPage(token, self.space, c)
+                        nextpath.append(page['title'])
+                    except Exception, e:
+                        return None
+                else:
+                    page = server.confluence1.getPage(token, parentID)      
+            
+                pagesummaries = sorted(server.confluence1.getChildren(token, page['id']))
+                
+                if pagesummaries is not None and len(pagesummaries)>0:
+                    for ps in pagesummaries:
+                        pagename=self.__stripUniqueID(ps['title'])
+                        if pagename.lower() == components[0].lower():
+                            nextpath.append(ps['title'])
+                            parentID=ps['id']
+                            break
+            
+            newpath=os.path.join(os.path.join(*nextpath),base)
+            
+            return newpath
+        except Exception, e:
+            print 'WARNING: Path not found, %s.' % path
+            return fpath
 
     def __renameOldDuplicates(self, server, token, pagename):
         count=1
@@ -672,7 +744,7 @@ class H2C:
             count+=1
             
     def __stripUniqueID(self, pagename):
-        pattern = re.compile(' \([0-9]+?\)')
+        pattern = re.compile('[0-9]*$')
         m = pattern.search(pagename)
             
         if m==None:
@@ -695,7 +767,7 @@ class H2C:
             return pagename
 
         while page is None:
-            nextpagename=pagename+' ('+str(count)+')'
+            nextpagename=pagename+str(count)
 
             try:
                 testpage = server.confluence1.getPage(token, self.space, nextpagename)
@@ -715,7 +787,7 @@ class H2C:
         parent=os.path.dirname(dpath)
         parentID = None
 
-        print('Checking path: "%s"' % dpath)
+        print('Creating remote directory: "%s"' % dpath)
         
         if len(parent)>0:
             parentID=self.__getPageID(server, token, parent)
@@ -753,14 +825,12 @@ class H2C:
         content=f.read()
         f.close()
 
-        relpath=fpath.replace(self.idestination, '').strip('/')
-
-        basename=os.path.basename(relpath)
-        parent=os.path.dirname(relpath).strip('/')
+        basename=os.path.basename(fpath)
+        parent=os.path.dirname(fpath).strip('/')
 
         baseparent=os.path.basename(parent)
         print 'Checking to see if base(%s)==baseparent(%s)...' % (basename, baseparent)
-        if basename.lower()==baseparent.lower():
+        if self.__stripUniqueID(basename.lower())==self.__stripUniqueID(baseparent.lower()):
             print 'Updating location...'
             relpath=parent
             parent=''
@@ -860,23 +930,16 @@ class H2C:
     def __loadAttachment(self, server, token, fpath):
         print('loading attachment: %s...' % fpath)
         
-        relpath=fpath.replace(self.idestination, '').strip('/')
-
+        relpath=fpath.strip('/')
         basename=os.path.basename(relpath)
         parent=os.path.dirname(relpath).strip('/')
 
         if os.path.getsize(fpath)>8388608:
-             print 'Using Webdav to load %s' % basename
-             self.__loadLargeAttachment(server, token, fpath, parent, basename)
+             self.__loadLargeAttachment(server, token, fpath)
              return
 
         with open(fpath, 'rb') as f:
             data = f.read(); # slurp all the data
-
-        relpath=fpath.replace(self.idestination, '').strip('/')
-
-        basename=os.path.basename(relpath)
-        parent=os.path.dirname(relpath).strip('/')
 
         name, ext = os.path.splitext(relpath)
 
@@ -884,7 +947,6 @@ class H2C:
 
         try:
             pageID=self.__getPageID(server, token, parent)
-            print('Attachment parent ID: %s' % pageID)
 
             if pageID is not None:
                 attachment = {};
@@ -905,14 +967,21 @@ class H2C:
 
         f.close()
 
-    def __loadLargeAttachment(self, sever, token, fpath, parent, basename):
-        url = self.webdav + '/' + self.space + '/' + parent + '/' + basename
+    def __loadLargeAttachment(self, server, token, fpath):
+        print 'Using Webdav to load %s' % fpath    
+        
+        url = self.webdav + '/' + self.space + '/' + \
+            self.__resolvePath(server, token, fpath)
+            
+        basename=os.path.basename(fpath)
 
         if not os.path.exists(fpath):
             return False
 
         with open(fpath, 'rb') as f:
             data = f.read();
+        
+        f.close()
 
         name, ext = os.path.splitext(fpath)
 
@@ -920,6 +989,7 @@ class H2C:
 
         try:
             print 'url=%s' % url
+            
             o = urlparse.urlparse(url)
      
             if o.scheme=='http':
@@ -934,7 +1004,12 @@ class H2C:
             if response.status != 200:
                 raise Exception("%d, %s" % (response.status, response.reason))
 
-            response = conn.put(o.geturl(), data)
+            response = conn.put(o.geturl(), data, contentType)
+            
+            if response.status == 409:
+                print 'Conflict encountered with %s, attempting to delete and retry.' % basename
+                response = conn.delete(o.geturl())
+                response = conn.put(o.geturl(), data, contentType)
 
             if response.status > 204:
                 raise Exception("%d, %s" % (response.status, response.reason))
@@ -942,17 +1017,23 @@ class H2C:
             print 'WebDav Import Successful.'
         except Exception, e:
             print 'ERROR: Failed to load attacment using webdav: %s' % basename
-            print 'EXCEPTION: %s\n' % e
+            print 'EXCEPTION: %s\n' % unicode(str(e))
 
 if __name__ == "__main__":
     if len(sys.argv)<=4:
         print '\nUsage: h2c.py [action] [https://servername.com] [login] ' + \
               '[password] [confluence-space] [action specific options...]\n'
         print '  Where [action] can be one of the following:'
-        print '   * import - import content to confluence'
-        print '              specify additional parameters: [confluence-space] [local-source] [working-directory]' 
-        print '   * export - export content from webdav/sharepoint'
-        print '              specify additional parameters: [confluence-space] [remote-path] [exported-data]\n'
+        print ''
+        print '   * convert - convert HTML content to confluence accepted format'
+        print '               specify additional parameters: [confluence-space] [local-source] [working-directory]' 
+        print ''
+        print '   * import  - import converted content or other local source to confluence'
+        print '               specify additional parameters: [confluence-space] [local-source]'  
+        print ''      
+        print '   * export  - export content from webdav/sharepoint'
+        print '               specify additional parameters: [confluence-space] [remote-path] [exported-data]\n'
+        print ''
         print 'Example: ./htc.py import https://server.com user test spacename /source /converted\n'
         print 'Example: ./htc.py export https://server.com:8443 user test spacename /remote/directory\n'
     else:
@@ -964,17 +1045,21 @@ if __name__ == "__main__":
         c.setPass(sys.argv[4])
         c.setSpace(sys.argv[5])
 
-        if c.action=='import':
+        if c.action=='convert':
             c.setImportSource(sys.argv[6])
             c.setImportDestination(sys.argv[7])
 
+            if c.convertContent():
+                print '\nCONVERSION  COMPLETE.\n'
+        elif c.action=='import':
+            c.setImportDestination(sys.argv[6])
+
             if c.importContent():
-                c.loadPages()
                 print '\nIMPORT COMPLETE.\n'
         elif c.action=='export':
             c.setExportSource(sys.argv[6])
             c.setExportDestination(sys.argv[7])
             if c.exportContent():
-                print '\n EXPORT COMPLETE.\n'
+                print '\nEXPORT COMPLETE.\n'
         else:
             print 'Please specify an accpeted [action]!'
