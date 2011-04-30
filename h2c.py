@@ -808,8 +808,8 @@ class H2C:
         basename=os.path.basename(dpath)
         parent=os.path.dirname(dpath)
         parentID = None
-
-        print('Creating remote directory: "%s"' % dpath)
+        
+        print('Checking for remote directory: "%s"' % dpath)
         
         if len(parent)>0:
             parentID=self.__getPageID(server, token, parent)
@@ -818,7 +818,7 @@ class H2C:
         newDirID=self.__getPageID(server, token, dpath)
 
         if newDirID is not None:
-            print 'Directory exist already: %s; skipping...' % basename
+            print 'Directory exist already: %s; skipping...\n' % basename
             return
 
         pagename=self.__getUniqueConfluencePageName(server, token, basename)
@@ -828,11 +828,10 @@ class H2C:
         if parentID is not None:
             print 'Assigning parentID: %s' % parentID
             newpagedata['parentId']=parentID
-            print newpagedata
-
         try:
+            print 'Creating remote directory: "%s, %s"' % (parentID, newpagedata['title'])
             newpage = server.confluence1.storePage(token, newpagedata)
-            print 'Successfully created: %s' % newpage['title']
+            print 'Successfully created: %s\n' % newpage['title']
         except Exception, e:
             print 'ERROR: Failed to create %s' % basename
             print('EXCEPTION: %s\n' % unicode(str(e)))
@@ -840,8 +839,6 @@ class H2C:
 
                 
     def __loadPage(self, server, token, fpath):
-        print('Loading page: %s...' % fpath)
-        
         f=open(fpath, 'rb')
         f.seek(0)
         content=f.read()
@@ -853,46 +850,49 @@ class H2C:
         parent=os.path.dirname(fpath).strip('/')
 
         baseparent=os.path.basename(parent)
-        print 'Checking to see if base(%s)==baseparent(%s)...' % (basename, baseparent)
-        if self.__stripUniqueID(basename.lower())==self.__stripUniqueID(baseparent.lower()):
-            print 'Updating location...'
-            relpath=parent
-            parent=''
+        
+        #check to see if it's a renamed browse-page and/or parent page
+        relpath=fpath
+        
+        print'Loading page, parent=%s, page=%s...' % (parent, basename)
+        
+        try:
+            if self.__stripUniqueID(basename.lower())==self.__stripUniqueID(baseparent.lower()):
+                print 'Parent and Page match, updating...'
+                relpath=parent
+                parent=os.path.dirname(relpath).strip('/')
+                print 'Updated location, parent=%s, page=%s.' % (parent, relpath)
 
-        pageID=self.__getPageID(server, token, fpath)
-
-        if pageID is not None:
-            page = server.confluence1.getPage(token, pageID)
-            page['content']=content
-            newpage = server.confluence1.storePage(token, page)
-            print 'Page Successfully updated: %s, %s' % (newpage['title'], len(content))
-        else:
-            pagename=self.__getUniqueConfluencePageName(server, token, basename)
-            newpagedata = {"title":pagename, "content":content,"space":self.space}
-
-            if len(parent)>0:
-                parentID=self.__getPageID(server, token, parent)
-                print('parent: %s, %s' % (parentID, parent))
-                if parentID is not None:
-                    parentpage = server.confluence1.getPage(token, parentID);
-
-                    if parentpage is None:
-                        print('ERROR: parent  not found: %s, %s!' % (self.space, parent))
-                    else:
-                        newpagedata['parentId']=parentpage['id']
-
-            #self.__renameOldDuplicates(server, token, basename)
+            pageID=self.__getPageID(server, token, relpath)
             
-            try:
+            print 'pageID=%s' % pageID
+
+            if pageID is not None:
+                page = server.confluence1.getPage(token, pageID)
+                page['content']=content
+                newpage = server.confluence1.storePage(token, page)
+                print 'Page Successfully updated: %s, %s\n' % (newpage['title'], len(content))
+            else:
+                pagename=self.__getUniqueConfluencePageName(server, token, basename)
+                newpagedata = {"title":pagename, "content":content,"space":self.space}
+
+                if len(parent)>0:
+                    parentID=self.__getPageID(server, token, parent)
+                    print('parent: %s, %s' % (parentID, parent))
+                    if parentID is not None:
+                        parentpage = server.confluence1.getPage(token, parentID);
+
+                        if parentpage is None:
+                            print('ERROR: parent  not found: %s, %s!' % (self.space, parent))
+                        else:
+                            newpagedata['parentId']=parentpage['id']
+            
                 newpage = server.confluence1.storePage(token, newpagedata)
-                print 'Page Successfully Created: %s, %s' % (newpage['title'], len(content))
-            except Exception, e:
-                print 'ERROR: Failed to create page:'
-                print '%s' % newpagedata
-                print 'This page contains data which is not meant for representation' + \
-                ' probably should be loaded as an attachement.'
-                server, token=self.__resetConnection(server, token)
-                self.__loadAttachment(server, token, fpath)
+                print 'Page Successfully Created: %s, %s\n' % (newpage['title'], len(content))
+        except Exception, e:
+            print 'ERROR: Failed to create page: %s' % basename
+            print('EXCEPTION: %s\n' % unicode(str(e)))
+            traceback.print_exc(file=sys.stdout)
                 
     def __getMimeType(self, ext):
         ext=ext.lower()
