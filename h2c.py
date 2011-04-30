@@ -910,8 +910,10 @@ class H2C:
             contentType='image/gif'
         elif ext=='.png':
             contentType='image/png'
-        elif ext=='.doc':
+        elif ext=='.doc' or  ext=='.dot':
             contentType='application/msword'
+        elif ext=='.ppt':
+            contentType='application/vnd.ms-powerpoint'    
         elif ext=='.docx' or ext=='.pptx' or ext=='.xlsx':
             contentType='application/vnd.openxmlformats'
         elif ext=='.xls' or ext=='.xlsx':
