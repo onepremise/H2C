@@ -846,6 +846,8 @@ class H2C:
         f.seek(0)
         content=f.read()
         f.close()
+        
+        fpath=fpath.strip('/') 
 
         basename=os.path.basename(fpath)
         parent=os.path.dirname(fpath).strip('/')
@@ -857,7 +859,7 @@ class H2C:
             relpath=parent
             parent=''
 
-        pageID=self.__getPageID(server, token, relpath)
+        pageID=self.__getPageID(server, token, fpath)
 
         if pageID is not None:
             page = server.confluence1.getPage(token, pageID)
