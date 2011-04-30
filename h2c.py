@@ -142,11 +142,18 @@ class H2C:
                 self.__exportWebDAVDir(conn, self.esource)
             else:
                 print 'ERROR: Failed to authenticate! Please check your login.'
+                return False
+                
+            return True
         except Exception, e:
             print 'ERROR: Failed to export webdav: %s' % self.server
             print 'EXCEPTION: %s\n' % e
             traceback.print_exc(file=sys.stdout)
+            return False
             
+        return True
+    
+    # Check for directory names like 1. Analysis or 2. Data         
     def __isProjectDir(self, directory):
         pattern = re.compile('[12345]\. .+?\/')
         m = pattern.search(directory)
@@ -159,7 +166,8 @@ class H2C:
             return True
             
         return False
-        
+    
+    # Don't use directory names like 1. Analysis or 2. Data    
     def __stripProjectSubDir(self, c):
         pattern = re.compile('[12345]\. .+?\/')
         m = pattern.search(c)
@@ -185,6 +193,7 @@ class H2C:
             
             parent=self.edestination+directory
             isParentProjSubDir=self.__isProjectDir(parent)
+            parent=self.__normalizeString(parent, 0)
             
             if not os.path.exists(parent) and not isParentProjSubDir:
                 os.makedirs(parent)
@@ -201,14 +210,15 @@ class H2C:
             for c in cnames:
                 node=self.server+c
                 localpath=self.edestination+c
-                projectSubDir=self.__isProjectDir(c)
 
                 do = dav.DAVResource(node, conn)
 
                 is_collection=do.is_collection()
 
-                if projectSubDir:
+                if self.__isProjectDir(c):
                     localpath=self.__stripProjectSubDir(localpath)
+                    
+                localpath=self.__normalizeString(localpath, 0)
 
                 if is_collection:
                     if not os.path.exists(localpath):
@@ -218,7 +228,7 @@ class H2C:
                     	self.__exportWebDAVDir(conn, c)
                 else:
                     #recreate file
-                    print 'Downloading File %s...' % node
+                    print 'Downloading File %s to %s...' % (node, localpath)
                     self.__recieveFile(do.get(), localpath)
         except Exception, e:
             print 'ERROR: Failed to export webdav: %s' % self.server
@@ -240,7 +250,10 @@ class H2C:
         if stripPage and directory!='/':
             localpath=self.__stripProjectSubDir(directory)
             filename = self.edestination + localpath + os.sep + os.path.basename(localpath)
-            
+        
+        localpath=self.__normalizeString(localpath, 0)
+        filename=self.__normalizeString(filename, 0)
+        
         localfile = open(filename, 'a')
 
         if not appendPage:
@@ -259,6 +272,7 @@ class H2C:
             if c != directory:
                 if not self.__isProjectDir(os.path.basename(c)):
                     c=self.__stripProjectSubDir(c)
+                    c=self.__normalizeString(c, 0)
                     basename, ext = os.path.splitext(c)
                     
                     if len(ext)==0:
@@ -327,6 +341,8 @@ class H2C:
 
         value=value.replace('(', '')
         value=value.replace(')', '')
+        value=value.replace('[', '')
+        value=value.replace(']', '')        
         value=value.replace(' ', '')
 
         return value
@@ -394,7 +410,7 @@ class H2C:
                     print '\n'
                 else:
                     if recreateFullPath:
-                        newf=basename+extension
+                        newf=basename+extension.lower()
                         newf=self.__matchNormalizedString(newf, 1)
                         
                         if os.path.exists(newf) and filecmp.cmp(f, newf):
@@ -509,10 +525,13 @@ class H2C:
     def __globalReplace(self, oldLink, newLink):
         for dname, dirs, files in os.walk(self.idestination):
             for fname in files:
-                oldLink=oldLink.strip('/')
-                newLink=newLink.strip('/')
+                basename, ext = os.path.splitext(fname)
+                
+                if ext == '':
+                    oldLink=oldLink.strip('/')
+                    newLink=newLink.strip('/')
 
-                self.__replaceLink(dname, fname, oldLink, newLink)
+                    self.__replaceLink(dname, fname, oldLink, newLink)
 
     def __replaceLink(self, dname, fname, oldLink, newLink):
         fpath = os.path.join(dname, fname)
@@ -576,12 +595,14 @@ class H2C:
 
         return html
 
+    # String html extention from content
     def __stripHtmlExt(self, url, content):
         newVal=string.replace(url, '.html', '')
         p = re.compile(url)
         content=p.sub(newVal, content)
         return content
 
+    # String localhost from content
     def __stripLocalhost(self, url, content):
         p = re.compile('http:\/\/localhost.+?\/')
         content=p.sub('', content)
@@ -623,7 +644,8 @@ class H2C:
                     self.__loadAttachment(s, token, fullrelpath)
 		
         return True
-        
+    
+    # Recursively create full remote path    
     def __remoteMkDirs(self, server, token, path):
         print 'Creating full path: %s...' % path
         
@@ -744,7 +766,7 @@ class H2C:
             count+=1
             
     def __stripUniqueID(self, pagename):
-        pattern = re.compile('[0-9]*$')
+        pattern = re.compile('_[0-9]*$')
         m = pattern.search(pagename)
             
         if m==None:
@@ -767,7 +789,7 @@ class H2C:
             return pagename
 
         while page is None:
-            nextpagename=pagename+str(count)
+            nextpagename=pagename+'_'+str(count)
 
             try:
                 testpage = server.confluence1.getPage(token, self.space, nextpagename)
@@ -782,7 +804,7 @@ class H2C:
         return page
             
     def __createDir(self, server, token, dpath):
-        dpath=dpath.replace(self.idestination, '').strip('/')
+        dpath=dpath.strip('/')
         basename=os.path.basename(dpath)
         parent=os.path.dirname(dpath)
         parentID = None
