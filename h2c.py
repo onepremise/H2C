@@ -712,9 +712,9 @@ class H2C:
         components = deque(path.split(os.sep))
 
         try:
+            c=components.popleft()
+            
             while len(components) > 0:
-                c=components.popleft()
-                
                 if parentID == None:
                     try:
                         page = server.confluence1.getPage(token, self.space, c)
@@ -729,10 +729,13 @@ class H2C:
                 if pagesummaries is not None and len(pagesummaries)>0:
                     for ps in pagesummaries:
                         pagename=self.__stripUniqueID(ps['title'])
+                        print 'pagename=%s, ps[title]=%s, components[0]=%s' % (pagename,ps['title'],components[0])
                         if pagename.lower() == components[0].lower():
                             nextpath.append(ps['title'])
                             parentID=ps['id']
                             break
+                            
+                c=components.popleft()
             
             newpath=os.path.join(os.path.join(*nextpath),base)
             
@@ -774,7 +777,7 @@ class H2C:
             
         pagename=pagename.replace(m.group(0), '')
         
-        return pagename        
+        return pagename
             
     def __getUniqueConfluencePageName(self, server, token, pagename):
         count=1
