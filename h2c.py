@@ -729,7 +729,7 @@ class H2C:
                 if pagesummaries is not None and len(pagesummaries)>0:
                     for ps in pagesummaries:
                         pagename=self.__stripUniqueID(ps['title'])
-                        print 'pagename=%s, ps[title]=%s, components[0]=%s' % (pagename,ps['title'],components[0])
+                        #print 'pagename=%s, ps[title]=%s, components[0]=%s' % (pagename,ps['title'],components[0])
                         if pagename.lower() == components[0].lower():
                             nextpath.append(ps['title'])
                             parentID=ps['id']
@@ -769,7 +769,7 @@ class H2C:
             count+=1
             
     def __stripUniqueID(self, pagename):
-        pattern = re.compile('_[0-9]*$')
+        pattern = re.compile('__v[0-9]*$')
         m = pattern.search(pagename)
             
         if m==None:
@@ -792,7 +792,7 @@ class H2C:
             return pagename
 
         while page is None:
-            nextpagename=pagename+'_'+str(count)
+            nextpagename=pagename+'__v'+str(count)
 
             try:
                 testpage = server.confluence1.getPage(token, self.space, nextpagename)
@@ -985,13 +985,13 @@ class H2C:
                 print 'Reading binary: %s...' % len(data)
                 bdata=xmlrpclib.Binary(data)
 
-                print 'Uploading attachment: %s' % basename
+                print 'Uploading attachment: %s...\n' % basename
                 server.confluence1.addAttachment(token, pageID, attachment, bdata);
 
             else:
-                print 'ERROR: Failed to locate parent: %s' % parent
+                print 'ERROR: Failed to locate parent: %s\n' % parent
         except Exception, e:
-            print 'ERROR: Failed to load attacment: %s' % basename
+            print 'ERROR: Failed to load attacment: %s\n' % basename
             print 'EXCEPTION: %s\n' % unicode(str(e))
 
         f.close()
