@@ -139,7 +139,7 @@ class H2C:
 
             if response.status != 200:
                 print 'Connection Authenticated.'
-                self.__exportWebDAVDir(conn, self.esource)
+                self.__exportWebDAVDir(conn, False, self.esource)
             else:
                 print 'ERROR: Failed to authenticate! Please check your login.'
                 return False
@@ -187,12 +187,17 @@ class H2C:
         return localpath
 
     # Recursive interation over child drectories and contents
-    def __exportWebDAVDir(self, conn, directory):
+    def __exportWebDAVDir(self, conn, stripProjectDirs, directory):
         try:
             print 'Exporting directory=%s' % directory
             
             parent=self.edestination+directory
-            isParentProjSubDir=self.__isProjectDir(parent)
+            
+            if stripProjectDirs:
+                isParentProjSubDir=self.__isProjectDir(parent)
+            else:
+                isParentProjSubDir=False
+                
             parent=self.__normalizeString(parent, 0)
             
             if not os.path.exists(parent) and not isParentProjSubDir:
@@ -203,9 +208,9 @@ class H2C:
             cnames = sorted(do.get_child_names())
             
             if not (self.__isProjectDir(os.path.basename(directory))):
-                self.__createBrowsePage(False, True, directory, cnames)
+                self.__createBrowsePage(False, stripProjectDirs, directory, cnames)
             else:
-                self.__createBrowsePage(True, True, directory, cnames)
+                self.__createBrowsePage(True, stripProjectDirs, directory, cnames)
 
             for c in cnames:
                 node=self.server+c
@@ -215,7 +220,7 @@ class H2C:
 
                 is_collection=do.is_collection()
 
-                if self.__isProjectDir(c):
+                if stripProjectDirs and self.__isProjectDir(c):
                     localpath=self.__stripProjectSubDir(localpath)
                     
                 localpath=self.__normalizeString(localpath, 0)
@@ -225,7 +230,7 @@ class H2C:
                         os.mkdir(localpath)
 
                     if c != directory:
-                    	self.__exportWebDAVDir(conn, c)
+                    	self.__exportWebDAVDir(conn, stripProjectDirs, c)
                 else:
                     #recreate file
                     print 'Downloading File %s to %s...' % (node, localpath)
@@ -250,6 +255,8 @@ class H2C:
         if stripPage and directory!='/':
             localpath=self.__stripProjectSubDir(directory)
             filename = self.edestination + localpath + os.sep + os.path.basename(localpath)
+        else:
+            localpath=directory
         
         localpath=self.__normalizeString(localpath, 0)
         filename=self.__normalizeString(filename, 0)
@@ -343,7 +350,7 @@ class H2C:
         value=value.replace(')', '')
         value=value.replace('[', '')
         value=value.replace(']', '')        
-        value=value.replace(' ', '')
+        #value=value.replace(' ', '')
 
         return value
 
