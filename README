@@ -1,0 +1,70 @@
+H2C is an import/export tool for Atlassian Confluence 
+(http://www.atlassian.com/software/confluence).
+
+Project Page:
+
+https://sourceforge.net/projects/h2c
+
+Features:
+
+- Recursively exports from Sharepoint
+- Recursively imports from Sharepoint
+- Recursively recreates directory structures in Confluence.
+- Recursively converts HTML to Textile and imports content.
+- Recursively updates all links in converted content.
+- Recursively loads attachemnts, including files > 8MB
+
+Dependencies:
+
+python 2.6
+lxml, http://pypi.python.org/pypi/lxml/2.3#downloads
+libxml2, http://xmlsoft.org/python.html 
+xmlrpclib
+setuptools, http://peak.telecommunity.com/dist/ez_setup.py
+python-ntlm, http://code.google.com/p/python-ntlm
+PyDAV Client, http://www.infrae.com/download/railroad/pydavclient
+
+Install Python 2.6:
+Grab python-2.6.msi from 3rd party and install.
+
+Install lxml:
+Grab lxml-2.3.win32-py2.6.exe from 3rdParty and install it.
+
+Install libxml2:
+Grab libxml2-python-2.7.7.win32-py2.6.exe from 3rdParty and install.
+
+Install setuptools:
+
+Download http://peak.telecommunity.com/dist/ez_setup.py
+run ez_setup.py
+
+Install python-ntlm from 3rdParty:
+
+gzip -d python-ntlm.tar.gz
+tar xvf python-ntlm.tar
+cd python-ntlm
+sudo python setup.py install
+
+Install PyDAV from 3rdParty:
+
+gzip -d pydavclient-0.2.tar.gz
+tar xvf pydavclient-0.2.tar
+cd pydavclient-0.2
+sudo python setup.py install
+
+How to use H2C:
+
+$ ./h2c.py
+
+Usage: h2c.py [action] [https://servername.com] [login] [password] [confluence-space] [action specific options...]
+
+  Where [action] can be one of the following:
+   * import - import content to confluence
+              specify additional parameters: [confluence-space] [local-source] [working-directory]
+   * export - export content from webdav/sharepoint
+              specify additional parameters: [confluence-space] [remote-path] [exported-data]
+
+Example: ./htc.py import https://server.com user test spacename /source /converted
+
+Example: ./htc.py export https://server.com:8443 user test spacename /remote/directory
+
