@@ -64,6 +64,9 @@ class H2C:
 
         self.linksToReplace=[]
         self.imagesToReplace=[]
+        
+        #These are some of the standard folders found in our sharepoint
+        self.projectSubDirs=['Notes', 'Analysis', 'Data', 'Analysis', 'Reports', 'Backlog']
 
     def setServer(self, s):
         self.webdav=s
@@ -152,16 +155,27 @@ class H2C:
             return False
             
         return True
+        
+    def __detectSubDir(self, directory):
+        for value in self.projectSubDirs:
+            pattern = re.compile('[12345]\. '+value)
+            m = pattern.search(directory)
+            
+            if m!=None:
+                return m
+                
+            pattern = re.compile('[12345]\.'+value)
+            m = pattern.search(directory.replace(' ', ''))
+            
+            if m!=None:
+                return m
+            
+        return None    
     
     # Check for directory names like 1. Analysis or 2. Data         
     def __isProjectDir(self, directory):
-        pattern = re.compile('[12345]\. .+?\/')
-        m = pattern.search(directory)
-                
-        if m==None:
-            pattern = re.compile('[12345]\. .*')
-            m = pattern.search(directory)        
-            
+        m = self.__detectSubDir(directory)
+        
         if m!=None:
             return True
             
@@ -169,12 +183,7 @@ class H2C:
     
     # Don't use directory names like 1. Analysis or 2. Data    
     def __stripProjectSubDir(self, c):
-        pattern = re.compile('[12345]\. .+?\/')
-        m = pattern.search(c)
-                
-        if m==None:
-            pattern = re.compile('[12345]\. .*')
-            m = pattern.search(c)
+        m = self.__detectSubDir(c)
             
         if m==None:
             return c
@@ -207,10 +216,11 @@ class H2C:
 
             cnames = sorted(do.get_child_names())
             
-            if not (self.__isProjectDir(os.path.basename(directory))):
-                self.__createBrowsePage(False, stripProjectDirs, directory, cnames)
-            else:
+            if stripProjectDirs and self.__isProjectDir(os.path.basename(directory)):
+                #Append page
                 self.__createBrowsePage(True, stripProjectDirs, directory, cnames)
+            else:
+                self.__createBrowsePage(False, stripProjectDirs, directory, cnames)
 
             for c in cnames:
                 node=self.server+c
@@ -277,18 +287,28 @@ class H2C:
 
         for c in cnames:
             if c != directory:
-                if not self.__isProjectDir(os.path.basename(c)):
-                    c=self.__stripProjectSubDir(c)
+                isProjSubDir=False
+                
+                if stripPage:
+                    isProjSubDir=self.__isProjectDir(os.path.basename(c))
+                    
+                if not isProjSubDir:
+                    if stripPage: 
+                        c=self.__stripProjectSubDir(c)
+                        
+                    isProjSubDir=self.__isProjectDir(os.path.basename(c))
+                    
                     c=self.__normalizeString(c, 0)
+                        
                     basename, ext = os.path.splitext(c)
                     
-                    if len(ext)==0:
+                    if len(ext)==0 or isProjSubDir:
                         newpath=os.path.basename(c)
-                        newpath=newpath.replace(' ', '')
+                        #newpath=newpath.replace(' ', '')
                         localfile.write(' * [%s:%s]\n' % (self.space, newpath))
                     else:
                         newpath=os.path.basename(c)
-                        newpath=newpath.replace(' ', '')
+                        #newpath=newpath.replace(' ', '')
                         localfile.write(' * [^%s]\n' % newpath)
 
         localfile.close()
@@ -645,7 +665,7 @@ class H2C:
                 fullrelpath = os.path.join(root, fle).replace('(','').replace(')','')
                 basename, ext = os.path.splitext(fullrelpath)
 
-                if ext == '':
+                if ext == '' or self.__isProjectDir(os.path.basename(fullrelpath)):
                     self.__loadPage(s, token, fullrelpath)
                 else:
                     self.__loadAttachment(s, token, fullrelpath)
@@ -794,9 +814,9 @@ class H2C:
             originalpage = server.confluence1.getPage(token, self.space, pagename)
 
             if originalpage is None:
-                return pagename
+                return count, pagename
         except:
-            return pagename
+            return count, pagename
 
         while page is None:
             nextpagename=pagename+'__v'+str(count)
@@ -811,7 +831,31 @@ class H2C:
 
             count+=1
             
-        return page
+        return count, page
+        
+    def __updateBrowsePage(self, server, token, browsepage, oldpage, newpage):
+        basedir = os.path.basename(browsepage)
+        browsepage = browsepage + os.sep + basedir
+        
+        print('Updating browse page: %s' % browsepage)
+            
+        oldpage=os.path.basename(oldpage)
+        newpage=os.path.basename(newpage)
+        
+        print('Replacing %s with %s' % (oldpage, newpage))
+        
+        f=open(browsepage, 'rb')
+        f.seek(0)
+        content=f.read()
+        f.close()
+        
+        content=content.replace(oldpage, newpage)
+        
+        f=open(browsepage, 'w')
+        f.write(content)
+        f.close()
+        
+        self.__loadPage(server, token, browsepage, True)
             
     def __createDir(self, server, token, dpath):
         dpath=dpath.strip('/')
@@ -831,7 +875,7 @@ class H2C:
             print 'Directory exist already: %s; skipping...\n' % basename
             return
 
-        pagename=self.__getUniqueConfluencePageName(server, token, basename)
+        count, pagename=self.__getUniqueConfluencePageName(server, token, basename)
         
         newpagedata = {"title":pagename, "content":" ","space":self.space}
 
@@ -841,6 +885,10 @@ class H2C:
         try:
             print 'Creating remote directory: "%s, %s"' % (parentID, newpagedata['title'])
             newpage = server.confluence1.storePage(token, newpagedata)
+            
+            if count>1:
+                self.__updateBrowsePage(server, token, parent, basename, pagename)
+                
             print 'Successfully created: %s\n' % newpage['title']
         except Exception, e:
             print 'ERROR: Failed to create %s' % basename
@@ -848,7 +896,7 @@ class H2C:
             traceback.print_exc(file=sys.stdout)
 
                 
-    def __loadPage(self, server, token, fpath):
+    def __loadPage(self, server, token, fpath, updateOnly=False):
         f=open(fpath, 'rb')
         f.seek(0)
         content=f.read()
@@ -857,7 +905,8 @@ class H2C:
         fpath=fpath.strip('/') 
 
         basename=os.path.basename(fpath)
-        parent=os.path.dirname(fpath).strip('/')
+        prestripparent=os.path.dirname(fpath)
+        parent=prestripparent.strip('/')
 
         baseparent=os.path.basename(parent)
         
@@ -882,8 +931,8 @@ class H2C:
                 page['content']=content
                 newpage = server.confluence1.storePage(token, page)
                 print 'Page Successfully updated: %s, %s\n' % (newpage['title'], len(content))
-            else:
-                pagename=self.__getUniqueConfluencePageName(server, token, basename)
+            elif not updateOnly:
+                count, pagename=self.__getUniqueConfluencePageName(server, token, basename)
                 newpagedata = {"title":pagename, "content":content,"space":self.space}
 
                 if len(parent)>0:
@@ -897,7 +946,11 @@ class H2C:
                         else:
                             newpagedata['parentId']=parentpage['id']
             
-                newpage = server.confluence1.storePage(token, newpagedata)
+                newpage = server.confluence1.storePage(token, basename, newpagedata)
+                
+                if count>1:
+                    self.__updateBrowsePage(server, token, prestripparent, pagename, pagename)
+                
                 print 'Page Successfully Created: %s, %s\n' % (newpage['title'], len(content))
         except Exception, e:
             print 'ERROR: Failed to create page: %s' % basename
@@ -1004,10 +1057,15 @@ class H2C:
         f.close()
 
     def __loadLargeAttachment(self, server, token, fpath):
-        print 'Using Webdav to load %s' % fpath    
+        print 'Using Webdav to load %s' % fpath
         
-        url = self.webdav + '/' + self.space + '/' + \
-            self.__resolvePath(server, token, fpath)
+        _resolvedPath=self.__resolvePath(server, token, fpath)
+        
+        if _resolvedPath==None:
+            print('ERROR: Failed to resolve path: %s' % fpath)
+            return False
+        
+        url = self.webdav + '/' + self.space + '/' + _resolvedPath
             
         basename=os.path.basename(fpath)
 
