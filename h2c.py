@@ -361,7 +361,7 @@ class H2C:
         return True
 
     def __normalizeString(self, value, useTitle):
-        value=value.replace('-',' ')
+        value=value.replace('-','_')
 
         if useTitle:
             value=value.title()
